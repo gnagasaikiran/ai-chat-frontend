@@ -1,6 +1,17 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./chat.css";
 import { API_URL } from "../config";
+import AIResponse from "./AIResponse";
+
+// Type guard for safety (works for both mock & real AI replies)
+function isStructuredReply(reply) {
+  return (
+    reply &&
+    typeof reply === "object" &&
+    !Array.isArray(reply) &&
+    ("summary" in reply || "keyPoints" in reply || "nextActions" in reply)
+  );
+}
 
 export default function Chat() {
   const [message, setMessage] = useState("");
@@ -9,11 +20,17 @@ export default function Chat() {
   ]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const endRef = useRef(null);
+
+  // Auto-scroll to the latest message
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   const sendMessage = async () => {
-    if (!message.trim()) return;
+    if (!message.trim() || loading) return;
 
-    const userMsg = message;
+    const userMsg = message.trim();
     setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
     setMessage("");
     setError("");
@@ -27,19 +44,29 @@ export default function Chat() {
       });
 
       if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || "API Error");
+        const t = await res.text();
+        throw new Error(t || "API Error");
       }
 
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "ai", text: data.reply }]);
+      const reply = data?.reply;
+
+      // ⛔ DO NOT do: { role: "ai", text: data.reply } if reply is an object
+      if (isStructuredReply(reply)) {
+        setMessages((prev) => [...prev, { role: "ai", data: reply }]); // ✅ correct
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { role: "ai", text: String(reply ?? "No reply returned") },
+        ]);
+      }
     } catch (e) {
+      console.error("sendMessage error:", e);
       setError("Something went wrong. Please try again.");
       setMessages((prev) => [
         ...prev,
         { role: "ai", text: "⚠️ Error: Could not reach backend." },
       ]);
-      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -52,18 +79,27 @@ export default function Chat() {
       <div className="chat-box">
         {messages.map((m, idx) => (
           <div key={idx} className={`msg ${m.role}`}>
-            <div className="bubble">{m.text}</div>
+            <div className="bubble">
+              {/* Render AI structured replies using a component */}
+              {m.role === "ai" && m.data ? (
+                <AIResponse data={m.data} />
+              ) : (
+                <span>{m.text}</span>
+              )}
+            </div>
           </div>
         ))}
 
         {loading && (
           <div className="msg ai">
-            <div className="bubble">Typing...</div>
+            <div className="bubble">Typing…</div>
           </div>
         )}
+
+        <div ref={endRef} />
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "crimson", marginTop: 8 }}>{error}</p>}
 
       <div className="chat-input">
         <input

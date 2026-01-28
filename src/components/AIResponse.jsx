@@ -1,19 +1,23 @@
 export default function AIResponse({ data }) {
-  const { summary, keyPoints, nextActions } = data || {};
+  if (!data || typeof data !== "object") return null;
+
+  const summary = data.summary ?? "";
+  const keyPoints = Array.isArray(data.keyPoints) ? data.keyPoints : [];
+  const nextActions = Array.isArray(data.nextActions) ? data.nextActions : [];
 
   return (
     <div>
       {summary && (
         <>
           <strong>Summary</strong>
-          <p>{summary}</p>
+          <p style={{ marginTop: 6 }}>{summary}</p>
         </>
       )}
 
-      {Array.isArray(keyPoints) && keyPoints.length > 0 && (
+      {keyPoints.length > 0 && (
         <>
           <strong>Key Points</strong>
-          <ul>
+          <ul style={{ marginTop: 6 }}>
             {keyPoints.map((p, i) => (
               <li key={i}>{p}</li>
             ))}
@@ -21,10 +25,10 @@ export default function AIResponse({ data }) {
         </>
       )}
 
-      {Array.isArray(nextActions) && nextActions.length > 0 && (
+      {nextActions.length > 0 && (
         <>
           <strong>Next Actions</strong>
-          <ul>
+          <ul style={{ marginTop: 6 }}>
             {nextActions.map((a, i) => (
               <li key={i}>{a}</li>
             ))}
