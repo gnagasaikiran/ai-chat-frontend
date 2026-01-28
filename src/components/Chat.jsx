@@ -3,7 +3,6 @@ import "./chat.css";
 import { API_URL } from "../config";
 import AIResponse from "./AIResponse";
 
-// Type guard for safety (works for both mock & real AI replies)
 function isStructuredReply(reply) {
   return (
     reply &&
@@ -12,6 +11,8 @@ function isStructuredReply(reply) {
     ("summary" in reply || "keyPoints" in reply || "nextActions" in reply)
   );
 }
+
+const MAX_LEN = 500;
 
 export default function Chat() {
   const [message, setMessage] = useState("");
@@ -22,15 +23,26 @@ export default function Chat() {
   const [error, setError] = useState("");
   const endRef = useRef(null);
 
-  // Auto-scroll to the latest message
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
   const sendMessage = async () => {
-    if (!message.trim() || loading) return;
+    if (loading) return;
+    const raw = message ?? "";
+    const trimmed = raw.trim();
 
-    const userMsg = message.trim();
+    // Client-side validation mirrors backend (never trust client only)
+    if (!trimmed) {
+      setError("Please type a message before sending.");
+      return;
+    }
+    if (trimmed.length > MAX_LEN) {
+      setError(`Message too long (max ${MAX_LEN} characters).`);
+      return;
+    }
+
+    const userMsg = trimmed;
     setMessages((prev) => [...prev, { role: "user", text: userMsg }]);
     setMessage("");
     setError("");
@@ -43,17 +55,41 @@ export default function Chat() {
         body: JSON.stringify({ message: userMsg }),
       });
 
+      // Map common server errors to friendly text
       if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || "API Error");
+        let friendly = "Something went wrong. Please try again.";
+        const status = res.status;
+
+        try {
+          const errJson = await res.json();
+          // Prefer server-provided message if present
+          if (errJson?.error?.message) friendly = errJson.error.message;
+
+          if (status === 400)
+            friendly = errJson?.error?.message || "Invalid input.";
+          if (status === 413)
+            friendly = errJson?.error?.message || "Message too long.";
+          if (status === 429)
+            friendly =
+              errJson?.error?.message || "Too many requests, slow down.";
+          if (status >= 500) friendly = "Server error. Try again in a moment.";
+        } catch {
+          // ignore JSON parse errors; stick with default friendly message
+        }
+
+        setError(friendly);
+        setMessages((prev) => [
+          ...prev,
+          { role: "ai", text: `⚠️ ${friendly}` },
+        ]);
+        return; // stop here on non-OK
       }
 
       const data = await res.json();
       const reply = data?.reply;
 
-      // ⛔ DO NOT do: { role: "ai", text: data.reply } if reply is an object
       if (isStructuredReply(reply)) {
-        setMessages((prev) => [...prev, { role: "ai", data: reply }]); // ✅ correct
+        setMessages((prev) => [...prev, { role: "ai", data: reply }]);
       } else {
         setMessages((prev) => [
           ...prev,
@@ -62,11 +98,9 @@ export default function Chat() {
       }
     } catch (e) {
       console.error("sendMessage error:", e);
-      setError("Something went wrong. Please try again.");
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: "⚠️ Error: Could not reach backend." },
-      ]);
+      const friendly = "Network error. Please check your connection.";
+      setError(friendly);
+      setMessages((prev) => [...prev, { role: "ai", text: `⚠️ ${friendly}` }]);
     } finally {
       setLoading(false);
     }
@@ -80,7 +114,6 @@ export default function Chat() {
         {messages.map((m, idx) => (
           <div key={idx} className={`msg ${m.role}`}>
             <div className="bubble">
-              {/* Render AI structured replies using a component */}
               {m.role === "ai" && m.data ? (
                 <AIResponse data={m.data} />
               ) : (
@@ -105,9 +138,10 @@ export default function Chat() {
         <input
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="Type a message..."
+          placeholder={`Type a message (max ${MAX_LEN} chars)…`}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
           disabled={loading}
+          maxLength={MAX_LEN + 1} // soft cap in UI; backend still enforces
         />
         <button onClick={sendMessage} disabled={loading}>
           Send
